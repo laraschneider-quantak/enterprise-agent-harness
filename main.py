@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
 
+
 load_dotenv()
 
 client = OpenAI()
@@ -23,7 +24,6 @@ class AgentDecision(BaseModel):
         "finished",
         "needs_human",
     ]
-
 
 
 def list_repository_files() -> list[str]:
@@ -74,52 +74,88 @@ def read_file(target: str) -> str:
     return requested_path.read_text(encoding="utf-8")
 
 
-response = client.responses.parse(
-    model="gpt-5.4-mini",
-    input="""
-You are a read-only enterprise software engineering agent.
+if __name__ == "__main__": 
 
-The following issue content has already been provided to you:
+    MAX_STEPS = 5
 
-Issue #42:
-Payment validation fails when currency is missing.
+    conversation = """
+    You are a read-only enterprise software engineering agent.
 
-Do not request information you already have.
+    Task:
+    Issue #42:
+    Payment validation fails when currency is missing.
 
-Available next actions:
-- list_repository_files
-- read_file
-- none
+    Available actions:
+    - list_repository_files
+    - read_file
+    - none
 
-Choose exactly one next step.
-""",
-    text_format=AgentDecision,
-)
+    Rules:
+    - Choose exactly one next action.
+    - Do not request information already present in the observations.
+    - Use status "finished" when no further useful action is possible.
+    """
 
-decision = response.output_parsed
 
-print("Agent proposal:")
-print(decision)
-print()
+    for step in range(MAX_STEPS):
+        print(f"\n--- Step {step + 1} ---")
 
-if decision.action == "list_repository_files":
-    print("Harness decision: ALLOW")
-    result = list_repository_files()
+        response = client.responses.parse(
+            model="gpt-5.4-mini",
+            input=conversation,
+            text_format=AgentDecision,
+        )
 
-    print("Tool result:")
-    for file in result:
-        print(file)
+        decision = response.output_parsed
 
-elif decision.action == "read_file":
-    print("Harness checking requested resource...")
+        print("Agent proposal:", decision)
 
-    if decision.target is None:
-        print("Harness decision: DENY - read_file requires a target.")
-    else:
-        result = read_file(decision.target)
+        # Stop condition 1: agent believes task is finished
+        if decision.status == "finished":
+            print("Harness: Agent finished.")
+            break
+
+        # Stop condition 2: agent requests human assistance
+        if decision.status == "needs_human":
+            print("Harness: Human assistance required.")
+            break
+
+        # Tool 1: list repository files
+        if decision.action == "list_repository_files":
+            print("Harness decision: ALLOW")
+
+            files = list_repository_files()
+            result = "\n".join(files)
+
+        # Tool 2: read a repository file
+        elif decision.action == "read_file":
+            if decision.target is None:
+                result = "DENIED: read_file requires a target."
+            else:
+                result = read_file(decision.target)
+
+        # No executable action
+        else:
+            print("Harness: No executable action.")
+            break
+
         print("Tool result:")
         print(result)
 
+        # Feed the observation back into the context
+        # so the next LLM call can reason about it.
+        conversation += f"""
 
-else:
-    print("Harness did not execute a tool.")
+    Agent chose:
+    {decision.action}
+
+    Target:
+    {decision.target}
+
+    Tool observation:
+    {result}
+    """
+
+    # Stop condition 3: deterministic harness limit
+    else:
+        print(f"\nHarness: Maximum of {MAX_STEPS} steps reached.")
