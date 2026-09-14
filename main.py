@@ -77,6 +77,78 @@ def read_file(target: str) -> str:
     return requested_path.read_text(encoding="utf-8")
 
 
+def list_repository_files_github() -> list[str]:
+    github_token = os.getenv("GITHUB_TOKEN")
+
+    if not github_token:
+        return ["ERROR: GITHUB_TOKEN is not configured."]
+
+    owner = "laraschneider-quantak"
+    repository = "enterprise-agent-harness"
+    authorized_ref = "main"
+
+    url = (
+        f"https://api.github.com/repos/"
+        f"{owner}/{repository}/git/trees/{authorized_ref}"
+        f"?recursive=1"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=10,
+    )
+
+    if response.status_code != 200:
+        return [f"ERROR: GitHub returned status {response.status_code}."]
+
+    tree = response.json()["tree"]
+
+    files = [
+        item["path"]
+        for item in tree
+        if item["type"] == "blob"
+    ]
+
+    return files
+
+def read_repository_file_github(target: str) -> str:
+    github_token = os.getenv("GITHUB_TOKEN")
+
+    if not github_token:
+        return "ERROR: GITHUB_TOKEN is not configured."
+
+    owner = "laraschneider-quantak"
+    repository = "enterprise-agent-harness"
+    authorized_ref = "main"
+
+    url = (
+        f"https://api.github.com/repos/"
+        f"{owner}/{repository}/contents/{target}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github.raw+json",
+    }
+
+    response = requests.get(
+        url,
+        headers=headers,
+        params={"ref": authorized_ref},
+        timeout=10,
+    )
+
+    if response.status_code != 200:
+        return f"ERROR: GitHub returned status {response.status_code}."
+
+    return response.text
+
 def read_issue(issue_number: int) -> str:
     github_token = os.getenv("GITHUB_TOKEN")
 
@@ -114,7 +186,7 @@ def read_issue(issue_number: int) -> str:
 
 
 if __name__ == "__main__":
-
+  
     MAX_STEPS = 5
 
     conversation = """
@@ -177,7 +249,7 @@ Rules:
         elif decision.action == "list_repository_files":
             print("Harness decision: ALLOW")
 
-            files = list_repository_files()
+            files = list_repository_files_github()
             result = "\n".join(files)
 
         # Tool 3: read a repository file
@@ -187,7 +259,7 @@ Rules:
             if decision.target is None:
                 result = "DENIED: read_file requires a target."
             else:
-                result = read_file(decision.target)
+                result = read_repository_file_github(decision.target)
 
         # No executable action
         else:
